@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">SrinivasChatbot</string>
+    <string name="message_hint">Start Typing...</string>
+    <string name="string_loading">Loading...</string>
+</resources>
