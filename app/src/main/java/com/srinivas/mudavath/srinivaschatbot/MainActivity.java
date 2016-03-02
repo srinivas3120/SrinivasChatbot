@@ -2,6 +2,7 @@ package com.srinivas.mudavath.srinivaschatbot;
 
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.IntentFilter;
 import android.database.Cursor;
 import android.media.MediaPlayer;
 import android.os.AsyncTask;
@@ -36,14 +37,16 @@ import com.srinivas.mudavath.database.MessageTable;
 import com.srinivas.mudavath.network.VolleySingleton;
 import com.srinivas.mudavath.pojo.MessageItem;
 import com.srinivas.mudavath.pojo.ResponseItem;
+import com.srinivas.mudavath.receivers.NetworkStateReceiver;
 import com.srinivas.mudavath.util.Util;
 
 import org.json.JSONObject;
 
-import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 
-public class MainActivity extends AppCompatActivity implements View.OnClickListener {
+public class MainActivity extends AppCompatActivity implements View.OnClickListener, NetworkStateReceiver.NetworkStateReceiverListener {
 
     Context mContext;
     RecyclerView rv_chat_conversation;
@@ -57,14 +60,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private View.OnClickListener viewClickListener;
     private TextView tv_view_more;
     private ProgressBar pb_loading_view_more;
+    private NetworkStateReceiver networkStateReceiver;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mContext=this;
-        ChatBotDBHelper dbHelper = new ChatBotDBHelper();
-        Env.init(this.getApplication(), dbHelper, null, true);
 
+        setUpDB();
+        setUpNetworkListener();
         setContentView(R.layout.activity_main);
         initializeViews();
         setListenersToViews();
@@ -83,6 +87,17 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     }
 
+    private void setUpDB() {
+        ChatBotDBHelper dbHelper = new ChatBotDBHelper();
+        Env.init(this.getApplication(), dbHelper, null, true);
+    }
+
+    private void setUpNetworkListener() {
+        networkStateReceiver = new NetworkStateReceiver();
+        networkStateReceiver.addListener(this);
+        this.registerReceiver(networkStateReceiver, new IntentFilter(android.net.ConnectivityManager.CONNECTIVITY_ACTION));
+    }
+
     private void initializeViews() {
         rv_chat_conversation= (RecyclerView) findViewById(R.id.rv_chat_conversation);
         et_message= (EditText) findViewById(R.id.et_message);
@@ -91,6 +106,47 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void setListenersToViews() {
         iv_send_message.setOnClickListener(this);
+    }
+
+    private void mClickListeners(){
+        viewClickListener=new View.OnClickListener(){
+
+            @Override
+            public void onClick(View v) {
+                final int position = (Integer) v.getTag();
+                switch (v.getId()){
+                    case R.id.rl_view_more:
+                        tv_view_more=getTextViewAt(position, R.id.tv_view_more);
+                        pb_loading_view_more=getProgressBarAt(position, R.id.pb_loading_view_more);
+                        tv_view_more.setText("Loading...");
+                        pb_loading_view_more.setVisibility(View.VISIBLE);
+                        getOldMessages(messageConversation.get(messageConversation.size() - 1).getCreatedAt());
+                        break;
+                }
+            }
+        };
+    }
+
+    private TextView getTextViewAt(int itemIndex, int id) {
+        int visiblePosition = linearLayoutManager.findFirstVisibleItemPosition();
+        View v = rv_chat_conversation.getChildAt(itemIndex - visiblePosition);
+        TextView textView = null;
+        if (v != null) {
+            textView = (TextView) v
+                    .findViewById(id);
+        }
+        return textView;
+    }
+
+    private ProgressBar getProgressBarAt(int itemIndex, int id) {
+        int visiblePosition = linearLayoutManager.findFirstVisibleItemPosition();
+        View v = rv_chat_conversation.getChildAt(itemIndex - visiblePosition);
+        ProgressBar progressBar = null;
+        if (v != null) {
+            progressBar = (ProgressBar) v
+                    .findViewById(id);
+        }
+        return progressBar;
     }
 
     @Override
@@ -103,20 +159,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 }else {
                     et_message.setText("");
                     String createdAt=System.currentTimeMillis()+"";
+                    MessageItem messageItem=new MessageItem(createdAt,createdAt,MessageItem.SEND_TYPE,MessageItem.PENDING_STATUS,message);
+                    messageConversation.add(0, messageItem);
+                    messageAdapter.notifyDataSetChanged();
+                    insertMessageIntoDB(messageItem);
                     if(Util.isNetworkAvailable(mContext)){
-                        MessageItem messageItem=new MessageItem(createdAt,createdAt,MessageItem.SEND_TYPE,MessageItem.SENT_STATUS,message);
-                        messageConversation.add(0, messageItem);
-                        messageAdapter.notifyDataSetChanged();
-                        //insert into database
-                        insertMessageIntoDB(messageItem);
-                        sendMessage(message);
+                        sendMessage(messageItem);
                     }else {
-                        /*MessageItem messageItem=new MessageItem(createdAt,createdAt,MessageItem.SEND_TYPE,MessageItem.PENDING_STATUS,message);
-                        messageConversation.add(0, messageItem);
-                        messageAdapter.notifyDataSetChanged();*/
                         Util.showBottomToast(mContext,"Check your internet connection...");
                     }
-                    //insert into database
 
                 }
                 break;
@@ -125,12 +176,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
-    private void sendMessage(String message) {
-        JsonObjectRequest jsonObjectRequest =new JsonObjectRequest(Request.Method.GET, Util.buildGetUrl(message), null,
+    private void sendMessage(final MessageItem messageItem) {
+        JsonObjectRequest jsonObjectRequest =new JsonObjectRequest(Request.Method.GET, Util.buildGetUrl(messageItem.getMessage()), null,
                 new Response.Listener<JSONObject>() {
                     @Override
                     public void onResponse(JSONObject response) {
-                        parseResponse(response);
+                        parseResponse(response,messageItem);
                     }
                 }, new Response.ErrorListener() {
             @Override
@@ -155,22 +206,68 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         volleySingleton.addToRequestQueue(jsonObjectRequest);
     }
 
-    private void parseResponse(JSONObject response) {
+    private void parseResponse(JSONObject response,MessageItem messageItem) {
         Gson gson = new Gson();
         //convert the json string to object
         ResponseItem responseItem = gson.fromJson(response.toString(), ResponseItem.class);
 
         if(responseItem.getSuccess()==1){
-            String createdAt=System.currentTimeMillis()+"";
-            MessageItem messageItem=new MessageItem(createdAt,createdAt,MessageItem.RECEIVE_TYPE,MessageItem.SENT_STATUS,responseItem.getMessage().getMessage());
-            messageConversation.add(0, messageItem);
-            messageAdapter.notifyDataSetChanged();
-            //insert into database
-            //play ringtone
+            String sentMsgCreatedAt=System.currentTimeMillis()+"";
+            String receivedMsgCreatedAt=(System.currentTimeMillis()+50)+"";
+            MessageItem receivedMessageItem=new MessageItem(receivedMsgCreatedAt,receivedMsgCreatedAt,MessageItem.RECEIVE_TYPE,MessageItem.SENT_STATUS,responseItem.getMessage().getMessage());
+            MessageItem sentMessageItem=new MessageItem(messageItem.getMessageId(),sentMsgCreatedAt,MessageItem.SEND_TYPE,
+                    MessageItem.SENT_STATUS,messageItem.getMessage());
+
+            messageConversation.add(0, receivedMessageItem);
+            updateMessageConversationList(sentMessageItem);
             playReceivedMessageRingtone();
-            insertMessageIntoDB(messageItem);
+            insertMessageIntoDB(receivedMessageItem);
+            insertMessageIntoDB(sentMessageItem);
+
         }else {
-            Util.showBottomToast(mContext,"onResponse - something went wrong...");
+            Util.showBottomToast(mContext,"Network error - something went wrong...");
+        }
+    }
+
+    private void getOldMessages(){
+        new GetMessagesTask().execute();
+    }
+    private void getOldMessages(String createdAt){
+        new GetMessagesTask().execute(createdAt);
+    }
+
+    private void insertMessageIntoDB(MessageItem messageItem){
+        new InsertMessageTask(messageItem).execute();
+    }
+
+    @Override
+    public void onNetworkAvailable() {
+        new GetPendingMessagesTask().execute();
+        Log.e("onNetworkAvailable", "onNetworkAvailable");
+    }
+
+    @Override
+    public void onNetworkUnavailable() {
+        Log.e("onNetworkUnavailable", "onNetworkUnavailable");
+    }
+
+    private void updateMessageConversationList(MessageItem sentMessageItem) {
+        String messageId=sentMessageItem.getMessageId();
+        for (int i = 0; i < messageConversation.size(); i++) {
+            if (messageId.equals(messageConversation.get(i).getMessageId())) {
+                messageConversation.get(i).setCreatedAt(sentMessageItem.getCreatedAt());
+                messageConversation.get(i).setMessageStatus(sentMessageItem.getMessageStatus());
+
+                Collections.sort(messageConversation, new Comparator<MessageItem>() {
+                    @Override
+                    public int compare(MessageItem p1, MessageItem p2) {
+                        return -new Double(Double.parseDouble(p1.getCreatedAt())).compareTo(new Double(Double.parseDouble(p2.getCreatedAt()))); // Ascending
+                    }
+
+                });
+                messageAdapter.notifyDataSetChanged();
+                return;
+            }
         }
     }
 
@@ -179,77 +276,21 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if(mp.isPlaying()){
             mp.stop();
         }
-
-        Log.e("_______","_______ : : : : " + mp.getDuration());
-            mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
-                @Override
-                public void onCompletion(MediaPlayer mp) {
-                    if (mp != null) {
-                        mp.stop();
-                        mp.release();
-                        mp = null;
-                    }
-                }
-            });
-            mp.start();
-
-
-    }
-
-    private void mClickListeners(){
-        viewClickListener=new View.OnClickListener(){
-
+        mp.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
             @Override
-            public void onClick(View v) {
-                final int position = (Integer) v.getTag();
-                switch (v.getId()){
-                    case R.id.rl_view_more:
-                        tv_view_more=getTextViewAt(position, R.id.tv_view_more);
-                        pb_loading_view_more=getProgressBarAt(position, R.id.pb_loading_view_more);
-                        tv_view_more.setText("Loading...");
-                        pb_loading_view_more.setVisibility(View.VISIBLE);
-                        getOldMessages(messageConversation.get(messageConversation.size() - 1).getMessageId());
-                        break;
+            public void onCompletion(MediaPlayer mp) {
+                if (mp != null) {
+                    mp.stop();
+                    mp.release();
+                    mp = null;
                 }
             }
-        };
+        });
+        mp.start();
+
+
     }
 
-
-    private TextView getTextViewAt(int itemIndex, int id) {
-        int visiblePosition = linearLayoutManager.findFirstVisibleItemPosition();
-        View v = rv_chat_conversation.getChildAt(itemIndex - visiblePosition);
-        TextView textView = null;
-        if (v != null) {
-            textView = (TextView) v
-                    .findViewById(id);
-        }
-        return textView;
-    }
-
-    private ProgressBar getProgressBarAt(int itemIndex, int id) {
-        int visiblePosition = linearLayoutManager.findFirstVisibleItemPosition();
-        View v = rv_chat_conversation.getChildAt(itemIndex - visiblePosition);
-        ProgressBar progressBar = null;
-        if (v != null) {
-            progressBar = (ProgressBar) v
-                    .findViewById(id);
-        }
-        return progressBar;
-    }
-
-
-
-    private void getOldMessages(){
-        new GetMessagesTask().execute();
-    }
-    private void getOldMessages(String lastMessageId){
-        new GetMessagesTask().execute(lastMessageId);
-    }
-
-    private void insertMessageIntoDB(MessageItem messageItem){
-        new InsertMessageTask(messageItem).execute();
-    }
 
 
     private class InsertMessageTask extends AsyncTask<String,String,MessageItem>{
@@ -289,10 +330,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             ArrayList<MessageItem> messageItems=new ArrayList<MessageItem>();
 
             if(params.length>0 && params[0]!=null){
-                selection=MessageTable.MESSAGE_ID+" < ? "+" ORDER BY 2 DESC limit 30 ";
+                selection=MessageTable.CREATED_AT+" < ? "+" ORDER BY 2 DESC limit 30 ";
                 selectionArgs[0]= params[0];
             }else {
-                selection=MessageTable.MESSAGE_ID+" is not null ORDER BY 2 DESC "+" limit 30 ";
+                selection=MessageTable.CREATED_AT+" is not null ORDER BY 2 DESC "+" limit 30 ";
                 selectionArgs=null;
             }
             cur = DatabaseMgr.selectRows(MessageTable.TABLE_NAME,columns,selection,selectionArgs);
@@ -327,4 +368,54 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             messageAdapter.notifyDataSetChanged();
         }
     }
+
+    private class GetPendingMessagesTask extends AsyncTask<String,String,ArrayList<MessageItem>>{
+
+        private String[] columns={MessageTable.MESSAGE_ID, MessageTable.CREATED_AT,
+                MessageTable.MESSAGE_TYPE, MessageTable.MESSAGE_STATUS, MessageTable.MESSAGE};
+
+        private String selection;
+        private String[] selectionArgs=new String[1];
+
+        @Override
+        protected ArrayList<MessageItem> doInBackground(String... params) {
+
+            Cursor cur=null;
+            ArrayList<MessageItem> messageItems=new ArrayList<MessageItem>();
+
+            selection=MessageTable.MESSAGE_TYPE+" ='"+MessageItem.SEND_TYPE+"' and " +
+                    MessageTable.MESSAGE_STATUS+" ="+MessageItem.PENDING_STATUS
+                    +" ORDER BY 2 ASC ";
+            selectionArgs=null;
+
+            cur = DatabaseMgr.selectRows(MessageTable.TABLE_NAME,columns,selection,selectionArgs);
+            try {
+                while (cur != null && cur.moveToNext()) {
+                    String messageId=cur.getString(cur.getColumnIndex(MessageTable.MESSAGE_ID));
+                    String createdAt=cur.getString(cur.getColumnIndex(MessageTable.CREATED_AT));
+                    String messageType=cur.getString(cur.getColumnIndex(MessageTable.MESSAGE_TYPE));
+                    int messageStatus=cur.getInt(cur.getColumnIndex(MessageTable.MESSAGE_STATUS));
+                    String message=cur.getString(cur.getColumnIndex(MessageTable.MESSAGE));
+                    messageItems.add(new MessageItem(messageId, createdAt, messageType.equals("s")?"s":"r", messageStatus, message));
+                }
+            }finally {
+                if (cur != null) {
+                    cur.close();
+                }
+            }
+            return messageItems;
+        }
+
+        @Override
+        protected void onPostExecute(ArrayList<MessageItem> messageItems) {
+            startSendingMessages(messageItems);
+        }
+    }
+
+    private void startSendingMessages(ArrayList<MessageItem> messageItems) {
+        for (int i = 0; i < messageItems.size(); i++) {
+            sendMessage(messageItems.get(i));
+        }
+    }
+
 }

@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Created by Mudavath Srinivas on 08-02-2016.
+ * Created by Mudavath Srinivas on 01-03-2016.
  */
 
 public class Util {
@@ -104,7 +104,7 @@ public class Util {
             TimeUnit.HOURS.toMillis(1),
             TimeUnit.MINUTES.toMillis(1),
             TimeUnit.SECONDS.toMillis(1));
-    public static final List<String> timesString = Arrays.asList("year","month","day","hour","min","sec");
+    public static final List<String> timesString = Arrays.asList("year","month","day","hr","min","sec");
 
     public static String getMessageTime(long duration) {
         duration=System.currentTimeMillis()-duration;
