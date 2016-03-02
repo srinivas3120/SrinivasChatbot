@@ -22,10 +22,10 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="12:30PM"
+            android:text="1 Mar, 12:30PM"
             android:textColor="@color/gray"
             android:layout_gravity="end"
-            android:visibility="gone"
+            android:visibility="visible"
             android:layout_below="@+id/textView"
             android:layout_alignParentRight="true"
             android:layout_alignParentEnd="true" />

@@ -3,6 +3,7 @@ import android.app.ProgressDialog;
 import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Uri;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.widget.Toast;
 
@@ -103,9 +104,9 @@ public class Util {
             TimeUnit.HOURS.toMillis(1),
             TimeUnit.MINUTES.toMillis(1),
             TimeUnit.SECONDS.toMillis(1));
-    public static final List<String> timesString = Arrays.asList("year","month","day","hour","minute","second");
+    public static final List<String> timesString = Arrays.asList("year","month","day","hour","min","sec");
 
-    public static String getFeedDuration(long duration) {
+    public static String getMessageTime(long duration) {
         duration=System.currentTimeMillis()-duration;
         StringBuffer res = new StringBuffer();
         for(int i=0;i< times.size(); i++) {
@@ -120,6 +121,16 @@ public class Util {
             return "Just now";
         else
             return res.toString();
+    }
+
+    public static String getMessageTime(String time){
+        long duration;
+        if(TextUtils.isEmpty(time)){
+            duration=System.currentTimeMillis();
+        }else {
+            duration=Long.parseLong(time);
+        }
+        return getMessageTime(duration);
     }
 
     public static String buildGetUrl(String message){
